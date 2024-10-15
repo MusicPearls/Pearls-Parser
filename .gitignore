@@ -33,4 +33,5 @@ env/
 # Environment variables
 .env
 
+data/
 tracksDetails2/
