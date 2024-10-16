@@ -24,6 +24,7 @@ def updateComposerInfo():
     with open(os.path.join(script_dir, '../data/composers.json'), encoding='utf-8') as fp:
         composers = json.load(fp)
     composers = composers['composers']
+    
     i = 0
     while i < len(composers):
         print(f'Fetching ID of {composers[i]["name"]}')

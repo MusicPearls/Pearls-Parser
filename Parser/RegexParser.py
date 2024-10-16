@@ -2,11 +2,9 @@ import pandas as pd
 import json
 from os import listdir
 from os.path import isfile, join
-import boto3
 from decimal import Decimal
 import re
 import numpy as np
-import openai
 
 pd.options.mode.chained_assignment = None
 
@@ -71,7 +69,7 @@ catalogs = ['Op. ', 'Op.', 'Op ', 'BWV. ', 'BWV.', 'K. ', 'K.', 'D. ', 'D.',
             'BWV.', 'BWV. ', 'BWV', 'BWV ', 'WoO. ', 'WoO.', 'WoO ', 'WoO']
 
 
-class OpusParser():
+class RegexParser():
     def __init__(self):
         self.tracks = None
         self.formOpus = None
