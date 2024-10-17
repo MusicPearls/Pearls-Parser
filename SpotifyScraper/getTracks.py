@@ -115,9 +115,11 @@ def getAlbumTracks(albumId, artistId, url=''):
         albumTracks = albumTracks + getAlbumTracks(albumId=albumId, artistId=artistId, url=url)
 
     else:
-        print(response)
         print(response.json())
-        raise RuntimeError('Bad Request. Halting code')
+        print('Bad Request, trying again')
+        time.sleep(int(600))
+        albumTracks = albumTracks + getAlbumTracks(albumId=albumId, artistId=artistId, url=url)
+
     
     if albumTracks:
         return albumTracks
