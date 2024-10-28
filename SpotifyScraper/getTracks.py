@@ -10,15 +10,13 @@ import re
 from . import utils
 
 load_dotenv()
-global access_token
-client_id = os.environ.get("CLIENT_ID_1")
-client_secret = os.environ.get("CLIENT_SECRET_1")
+client_id = os.getenv("CLIENT_ID_2")
+client_secret = os.getenv("CLIENT_SECRET_2")
 
 def updateComposerTracks():
     """
     Fetches all the tracks of the albums in data/albums
     """
-
     global access_token
     access_token = None
     script_dir = os.path.dirname(os.path.abspath(__file__))

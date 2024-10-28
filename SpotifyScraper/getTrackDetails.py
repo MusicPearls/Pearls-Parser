@@ -11,8 +11,8 @@ from . import utils
 
 load_dotenv()
 global access_token
-client_id = os.environ.get("CLIENT_ID_3")
-client_secret = os.environ.get("CLIENT_SECRET_3")
+client_id = os.environ.get("CLIENT_ID")
+client_secret = os.environ.get("CLIENT_SECRET")
 
 
 def updateComposerTrackDetails():
@@ -53,7 +53,7 @@ def updateComposerTrackDetails():
             with open(os.path.join(script_dir, f'../data/tracksDetails/tracksDetails_{composerId}.json'), 'w', encoding='utf-8') as f:
                 json.dump(composerTracksDetailsJson, f, ensure_ascii=False)
             time.sleep(5 * (random.random() + 1))
-            i = i + 1
+            i = i - 1
 
 def getComposerTrackDetails(artistId):
     """
