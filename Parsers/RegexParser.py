@@ -1,5 +1,6 @@
 import pandas as pd
 import json
+import os
 from os import listdir
 from os.path import isfile, join
 from decimal import Decimal
@@ -195,7 +196,7 @@ class RegexParser():
                     if count_op > count_no_op:
                         row['found_op'] = found_op
                         row['found_catalog'] = found_catalog
-                        found_op_df = found_op_df.append(row, ignore_index=True)
+                        found_op_df = pd.concat([found_op_df, pd.DataFrame([row])], ignore_index=True)
 
             df = df.merge(found_op_df, how='left', on=['composer', 'number', 'form']).fillna('')
             df['op'] = np.where(df['op'] == '', df['found_op'], df['op'])
@@ -219,6 +220,55 @@ class RegexParser():
                         return key
             return work_name
 
+        def convert_to_int(value):
+            """
+            Function that converts some value to integer but keeps empty values as empty
+            """
+
+            if value == '':
+                return ''
+            return int(value)
+
+        # Categorizing tracks
+        print('Categorizing Tracks...')
+        df = self.tracks.copy()
+        df['form'] = df['name'].apply(categorize)
+        categorized_df = df[df['form'] != '']
+        uncategorized_df = df[df['form'] == '']
+        # categorized_df.to_csv('categorized_raw.csv', encoding='utf-8')
+        # uncategorized_df.to_csv('uncategorized_raw.csv', encoding='utf-8')
+
+        # Joining equivalent categories
+        categorized_df['stantardized_form'] = categorized_df['form'].apply(lambda x: formMapper(x, formsMapping))
+        categorized_df['form'] = categorized_df['stantardized_form']
+        print(f'Categorized {len(categorized_df.index)} of {len(df.index)} tracks ({int((len(categorized_df.index)/(len(df.index)))*100)}%) ')
+
+        # Getting catalog of tracks
+        print('Getting catalog of tracks...')
+        categorized_df['number'] = categorized_df['name'].apply(getNo)
+        categorized_df[['op', 'catalog']] = categorized_df['name'].apply(getOp).apply(pd.Series)
+        categorized_df['popularity'] = categorized_df['popularity'].apply(convert_to_int)
+        categorized_df['op'] = categorized_df['op'].apply(convert_to_int)
+        categorized_df['number'] = categorized_df['number'].apply(convert_to_int)
+        print('Finding catalog of tracks based on other tracks...')
+        categorized_df['form'] = categorized_df['stantardized_form']
+        categorized_df = findOpus(categorized_df)
+
+        # Creating opus name
+        print('Creating opus name of tracks...')
+        categorized_df['opusname'] = categorized_df.apply(lambda row: createOpusName(row, ['name', 'form', 'number', 'op', 'catalog']), axis=1)
+
+
+        categorized_df = categorized_df[['name', 'composer', 'opusname', 'form', 'id']]
+        uncategorized_df['opusname'] = ''
+        uncategorized_df['form'] = ''
+        parsed_df = pd.concat([categorized_df, uncategorized_df[['name', 'composer', 'opusname', 'form', 'id']]], ignore_index=True)
+        parsed_df.to_csv('RegexParsed.csv', encoding='utf-8')
+        parsed_df.to_json('RegexParsed.json', orient='records', force_ascii=False)
+
+    def postProcess(self):
+        
+
         def normalizePopularity(df, type):
             """
             Function that makes the log-normalization of the popularity of the track
@@ -238,7 +288,8 @@ class RegexParser():
                     form_df = df[df['form'] == f]
                     form_df['p_log_r'] = form_df['popularity'] * np.log1p(form_df['nrecordings'])
                     max_plogr = form_df['p_log_r'].max()
-                    form_max = form_max.append({'form': f, 'max_p_log_r': max_plogr}, ignore_index=True)
+                    form_max = pd.concat([form_max, pd.DataFrame([{'form': f, 'max_p_log_r': max_plogr}])], ignore_index=True)
+
 
                 df['p_log_r'] = df['popularity'] * np.log1p(df['nrecordings'])
                 df = df.merge(form_max, how='left', on='form')
@@ -252,22 +303,13 @@ class RegexParser():
                     composer_df = df[df['composer'] == f]
                     composer_df['p_log_r'] = composer_df['popularity'] * np.log1p(composer_df['nrecordings'])
                     max_plogr = composer_df['p_log_r'].max()
-                    composer_max = composer_max.append({'composer': f, 'max_p_log_r': max_plogr}, ignore_index=True)
+                    composer_max = pd.concat([composer_max, pd.DataFrame([{'composer': f, 'max_p_log_r': max_plogr}])], ignore_index=True)
 
                 df['p_log_r'] = df['popularity'] * np.log1p(df['nrecordings'])
                 df = df.merge(composer_max, how='left', on='composer')
                 df['composerPopularity'] = 100 * (df['p_log_r'] / df['max_p_log_r'])
                 df = df.drop(columns=['p_log_r', 'max_p_log_r'])
                 return df
-
-        def convert_to_int(value):
-            """
-            Function that converts some value to integer but keeps empty values as empty
-            """
-
-            if value == '':
-                return ''
-            return int(value)
 
         def removeLowRecordings(df, threshold, type):
             """
@@ -292,8 +334,8 @@ class RegexParser():
                     if len(high_rec_df) < 10:
                         low_rec_df = low_rec_df.sort_values(by='nrecordings', ascending=False)
                         low_rec_df = low_rec_df.head(10 - len(high_rec_df))
-                        high_rec_df = high_rec_df.append(low_rec_df)
-                    keep_df = keep_df.append(high_rec_df, ignore_index=True)
+                        high_rec_df = pd.concat([high_rec_df, low_rec_df], ignore_index=True)
+                    keep_df = pd.concat([keep_df, high_rec_df], ignore_index=True)
 
                 keep_df = keep_df.drop(columns=['form', 'nrecordings'])
                 keep_df['kept'] = True
@@ -311,42 +353,14 @@ class RegexParser():
                     if len(high_rec_df) < 10:
                         low_rec_df = low_rec_df.sort_values(by='nrecordings', ascending=False)
                         low_rec_df = low_rec_df.head(10 - len(high_rec_df))
-                        high_rec_df = high_rec_df.append(low_rec_df)
-                    keep_df = keep_df.append(high_rec_df, ignore_index=True)
+                        high_rec_df = pd.concat([high_rec_df, low_rec_df], ignore_index=True)
+                    keep_df = pd.concat([keep_df, high_rec_df], ignore_index=True)
 
                 keep_df = keep_df.drop(columns=['composer', 'nrecordings'])
                 keep_df['kept'] = True
                 return keep_df
 
-        # Categorizing tracks
-        print('Categorizing Tracks...')
-        df = self.tracks.copy()
-        df['form'] = df['name'].apply(categorize)
-        categorized_df = df[df['form'] != '']
-        uncategorized_df = df[df['form'] == '']
-        # categorized_df.to_csv('raw.csv', encoding='utf-8')
-
-        # Joining equivalent categories
-        categorized_df['stantardized_form'] = categorized_df['form'].apply(lambda x: formMapper(x, formsMapping))
-        categorized_df['form'] = categorized_df['stantardized_form']
-        print(f'Categorized {len(categorized_df.index)} of {len(df.index)} tracks ({int((len(categorized_df.index)/(len(df.index)))*100)}%) ')
-
-        # Getting catalog of tracks
-        print('Getting catalog of tracks...')
-        categorized_df['number'] = categorized_df['name'].apply(getNo)
-        categorized_df[['op', 'catalog']] = categorized_df['name'].apply(getOp).apply(pd.Series)
-        categorized_df['popularity'] = categorized_df['popularity'].apply(convert_to_int)
-        categorized_df['op'] = categorized_df['op'].apply(convert_to_int)
-        categorized_df['number'] = categorized_df['number'].apply(convert_to_int)
-        print('Joining same tracks with and without catalog...')
-        categorized_df['form'] = categorized_df['stantardized_form']
-        categorized_df = findOpus(categorized_df)
-
-        # Creating opus name
-        print('Creating opus name of tracks...')
-        categorized_df['opusname'] = categorized_df.apply(lambda row: createOpusName(row, ['name', 'form', 'number', 'op', 'catalog']), axis=1)
-        categorized_df['opusname_lower'] = categorized_df['opusname'].str.lower()
-
+        # categorized_df['opusname_lower'] = categorized_df['opusname'].str.lower()
         # Getting number of recordings
         print('Getting number of recordings...')
         categorized_df['op_artist'] = categorized_df['opusname_lower'] + categorized_df['composer']
@@ -355,8 +369,8 @@ class RegexParser():
         recording_counts = recording_counts.sort_values(by=['nrecordings'], ascending=False)
         categorized_df = categorized_df.merge(recording_counts, on=['op_artist'], how='left')
 
-        categorized_df.to_csv('output.csv', encoding='utf-8')
-        # categorized_df = pd.read_csv('output.csv', encoding='utf-8', keep_default_na=False, na_filter=False)
+        categorized_df.to_csv('categorized_output.csv', encoding='utf-8')
+        # categorized_df = pd.read_csv('categorized_output.csv', encoding='utf-8', keep_default_na=False, na_filter=False)
 
         form_df = categorized_df.copy()
         composer_df = categorized_df.copy()
@@ -396,15 +410,15 @@ class RegexParser():
         self.formOpus = form_df
         self.composerOpus = composer_df
         self.fullOpus = categorized_df
-        self.uncategorizedTracks = uncategorized_df
 
     def getTracks(self):
         """
         Method that gets all tracks from tracksDetails files
         """
 
-        # Read all files from trackDetails
-        folderPath = r'C:\Users\leonardo.calasans\Desktop\MusicPearls\data\tracksDetails2'
+        # Read all files from tracksDetails
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        folderPath = os.path.abspath(os.path.join(script_dir, '../data/tracksDetails'))
         trackFiles = [f for f in listdir(folderPath) if isfile(join(folderPath, f))]
 
         # Getting all tracks
@@ -412,7 +426,8 @@ class RegexParser():
             self.tracks = pd.DataFrame(data=None, columns=['name', 'id', 'composer', 'artists', 'popularity'])
         for i in range(len(trackFiles)):
             # Open file in path and create dataframe from the json
-            with open(folderPath + r'\\' + trackFiles[i], encoding='utf-8') as fp:
+            file_path = os.path.join(folderPath, trackFiles[i])
+            with open(file_path, encoding='utf-8') as fp:
                 d = json.load(fp)
             d = d['tracks']
             df = pd.DataFrame.from_records(d)
@@ -421,7 +436,7 @@ class RegexParser():
             track_composers = df['composer'].value_counts()
             main_composer = track_composers.idxmax()
             df = df[df['composer'] == main_composer]
-            self.tracks = self.tracks.append(df)
+            self.tracks = pd.concat([self.tracks, df], ignore_index=True)
 
     def saveLocal(self):
         self.formOpus.to_json('form_opus.json', orient='records', force_ascii=False)
@@ -429,7 +444,7 @@ class RegexParser():
         self.uncategorizedTracks.to_json('uncategorized.json', orient='records', force_ascii=False)
 
 
-opus_handler = OpusParser()
+opus_handler = RegexParser()
 opus_handler.getTracks()
 opus_handler.parseOpus()
-opus_handler.saveLocal()
+# opus_handler.saveLocal()

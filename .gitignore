@@ -35,3 +35,6 @@ env/
 
 data/
 tracksDetails2/
+*.json
+*.csv
+*.DS_Store
