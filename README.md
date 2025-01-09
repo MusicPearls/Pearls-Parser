@@ -19,13 +19,7 @@ This project fetches and analyzes classical music data from Spotify to standardi
 - Grouping tracks into complete musical works and calculating popularity metrics of the full work, not just individual movements or tracks
 
 ## Setup
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/yourusername/classical-music-metadata-parser.git
-   cd classical-music-metadata-parser
-   ```
-
-2. Create and activate a virtual environment:
+1. Create and activate a virtual environment:
    ```bash
    python -m venv venv
    
@@ -36,12 +30,12 @@ This project fetches and analyzes classical music data from Spotify to standardi
    source venv/bin/activate
    ```
 
-3. Install dependencies:
+2. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
 
-4. Set up environment variables:
+3. Set up environment variables:
    ```bash
    # Copy the template file
    cp .env.template .env
@@ -52,7 +46,7 @@ This project fetches and analyzes classical music data from Spotify to standardi
    # - OPENAI_API_KEY=your_openai_api_key
    ```
 
-5. Create required directories and files:
+4. Create required directories and files:
    ```bash
    # Create data directory
    mkdir data
