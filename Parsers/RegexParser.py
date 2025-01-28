@@ -68,7 +68,8 @@ formsMapping = {
 
 catalogs = ['Op. ', 'Op.', 'Op ', 'BWV. ', 'BWV.', 'K. ', 'K.', 'D. ', 'D.',
             'H. ', 'H.', 'Hob. ', 'Hob.', 'S. ', 'S.', 'L.', 'L. ', 'M.', 'M. ',
-            'BWV.', 'BWV. ', 'BWV', 'BWV ', 'WoO. ', 'WoO.', 'WoO ', 'WoO']
+            'BWV.', 'BWV. ', 'BWV', 'BWV ', 'WoO. ', 'WoO.', 'WoO ', 'WoO', 'RV ',
+            'RV. ', 'RV', 'RV.', 'R.', 'R', 'R. ', 'R ']
 
 
 class RegexParser():
@@ -306,147 +307,187 @@ class RegexParser():
         )
 
     def postProcess(self):
-        def normalizePopularity(df, type):
+        """
+        Post-processes the RegexParsed tracks by:
+        1. Filtering out uncategorized tracks
+        2. Grouping by opus
+        3. Adding recording counts
+        4. Filtering by recording count threshold
+        5. Normalizing popularity in both form and composer contexts
+        6. Finding representative tracks
+        """
+        def readAndFilterTracks():
+            """Reads the RegexParsed.json file and filters out uncategorized tracks"""
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            file_path = os.path.join(script_dir, '../data/parsedTracks/RegexParsed.json')
+            
+            # Read and filter tracks
+            df = pd.read_json(file_path)
+            return df[(df['opusname'].str.len() > 0) & (df['form'].str.len() > 0)].copy()
+
+        def groupByOpus(df):
+            """Groups tracks by opus and calculates mean popularity"""
+            return df.groupby(['opusname', 'composer', 'form']).agg({
+                'popularity': 'mean'
+            }).reset_index()
+
+        def addRecordingCount(df, original_df):
+            """Adds recording count based on opusname + composer combinations"""
+            recording_counts = original_df.groupby(['opusname', 'composer']).size().reset_index(name='recordingCount')
+            return df.merge(recording_counts, on=['opusname', 'composer'])
+
+        def filterByRecordingCount(df, min_recordings=50, min_tracks_per_group=10):
             """
-            Function that makes the log-normalization of the popularity of the track
-            in the context of either all tracks of the same musical form or all tracks
-            of the same composer
-
-            Parameters
-            ----------
-            df: the original tracks dataframe
-            type: normalize in the context of musical form or of composer
+            Filters tracks based on recording count, ensuring minimum representation
+            for each composer and form. Also adds relevance flags indicating why each
+            track was included in the final dataset.
             """
+            # First get tracks meeting the recording threshold
+            high_recording_df = df[df['recordingCount'] >= min_recordings].copy()
+            high_recording_df['composerRelevant'] = True
+            high_recording_df['formRelevant'] = True
+            
+            # Get all unique composers and forms
+            all_composers = df['composer'].unique()
+            all_forms = df['form'].unique()
+            
+            # Check composer groups
+            composer_counts = high_recording_df['composer'].value_counts()
+            composers_needing_tracks = [
+                composer for composer in all_composers 
+                if composer_counts.get(composer, 0) < min_tracks_per_group
+            ]
+            
+            # Check form groups
+            form_counts = high_recording_df['form'].value_counts()
+            forms_needing_tracks = [
+                form for form in all_forms 
+                if form_counts.get(form, 0) < min_tracks_per_group
+            ]
+            
+            # For each composer needing tracks, add their top tracks
+            additional_composer_tracks = []
+            for composer in composers_needing_tracks:
+                composer_tracks = df[df['composer'] == composer]
+                needed = min_tracks_per_group - composer_counts.get(composer, 0)
+                if needed > 0:
+                    top_tracks = composer_tracks[~composer_tracks.index.isin(high_recording_df.index)] \
+                        .nlargest(needed, 'recordingCount')
+                    top_tracks['composerRelevant'] = True
+                    top_tracks['formRelevant'] = False
+                    additional_composer_tracks.append(top_tracks)
+            
+            # For each form needing tracks, add top tracks
+            additional_form_tracks = []
+            for form in forms_needing_tracks:
+                form_tracks = df[df['form'] == form]
+                needed = min_tracks_per_group - form_counts.get(form, 0)
+                if needed > 0:
+                    top_tracks = form_tracks[~form_tracks.index.isin(high_recording_df.index)] \
+                        .nlargest(needed, 'recordingCount')
+                    top_tracks['composerRelevant'] = False
+                    top_tracks['formRelevant'] = True
+                    additional_form_tracks.append(top_tracks)
+            
+            # Combine all dataframes
+            final_df = pd.concat(
+                [high_recording_df] + 
+                additional_composer_tracks + 
+                additional_form_tracks
+            ).drop_duplicates()
+            
+            return final_df.sort_values('recordingCount', ascending=False)
 
-            if type == 'Form':
-                unique_forms = df['form'].unique()
-                form_max = pd.DataFrame(columns=['form', 'max_p_log_r'])
-                for f in unique_forms:
-                    form_df = df[df['form'] == f]
-                    form_df['p_log_r'] = form_df['popularity'] * np.log1p(form_df['nrecordings'])
-                    max_plogr = form_df['p_log_r'].max()
-                    form_max = pd.concat([form_max, pd.DataFrame([{'form': f, 'max_p_log_r': max_plogr}])], ignore_index=True)
-
-
-                df['p_log_r'] = df['popularity'] * np.log1p(df['nrecordings'])
-                df = df.merge(form_max, how='left', on='form')
-                df['formPopularity'] = 100 * (df['p_log_r'] / df['max_p_log_r'])
-                df = df.drop(columns=['p_log_r', 'max_p_log_r'])
-                return df
-            elif type == 'Composer':
-                unique_composers = df['composer'].unique()
-                composer_max = pd.DataFrame(columns=['composer', 'max_p_log_r'])
-                for f in unique_composers:
-                    composer_df = df[df['composer'] == f]
-                    composer_df['p_log_r'] = composer_df['popularity'] * np.log1p(composer_df['nrecordings'])
-                    max_plogr = composer_df['p_log_r'].max()
-                    composer_max = pd.concat([composer_max, pd.DataFrame([{'composer': f, 'max_p_log_r': max_plogr}])], ignore_index=True)
-
-                df['p_log_r'] = df['popularity'] * np.log1p(df['nrecordings'])
-                df = df.merge(composer_max, how='left', on='composer')
-                df['composerPopularity'] = 100 * (df['p_log_r'] / df['max_p_log_r'])
-                df = df.drop(columns=['p_log_r', 'max_p_log_r'])
-                return df
-
-        def removeLowRecordings(df, threshold, type):
+        def normalizePopularity(df):
             """
-            Function that removes tracks with unrepresentative number of recordings
-            while assuring that every musical form keeps at least 10 entries of works
-
-            Parameters
-            ----------
-            df: the original tracks dataframe
-            threshold: the number of recordings to qualify the opus as representative
+            Performs log-normalization of popularity in two contexts:
+            1. Within each musical form (formPopularity) - using only form-relevant tracks
+            2. Within each composer's works (composerPopularity) - using only composer-relevant tracks
+            Both normalizations account for recording counts and range from 0 to 100
             """
+            # Calculate base log-normalized popularity for all tracks
+            df['p_log_r'] = df['popularity'] * np.log1p(df['recordingCount'])
+            
+            # Normalize by form (using only form-relevant tracks)
+            form_relevant = df[df['formRelevant']].copy()
+            form_max = form_relevant.groupby('form')['p_log_r'].transform('max')
+            form_relevant['formPopularity'] = 100 * (form_relevant['p_log_r'] / form_max)
+            
+            # Normalize by composer (using only composer-relevant tracks)
+            composer_relevant = df[df['composerRelevant']].copy()
+            composer_max = composer_relevant.groupby('composer')['p_log_r'].transform('max')
+            composer_relevant['composerPopularity'] = 100 * (composer_relevant['p_log_r'] / composer_max)
+            
+            # Merge the normalized popularities back to the main dataframe
+            df = df.merge(
+                form_relevant[['opusname', 'composer', 'formPopularity']], 
+                on=['opusname', 'composer'], 
+                how='left'
+            )
+            df = df.merge(
+                composer_relevant[['opusname', 'composer', 'composerPopularity']], 
+                on=['opusname', 'composer'], 
+                how='left'
+            )
+            
+            # Clean up intermediate columns
+            df = df.drop(columns=['p_log_r'])
+            
+            return df
 
-            if type == 'Form':
-                unique_forms = df['form'].unique()
-                keep_df = pd.DataFrame(columns=['op_artist'])
-                opus_df = df[['op_artist', 'form', 'nrecordings']].groupby(by=['op_artist']) \
-                    .agg({'form': 'first', 'nrecordings': 'first'}).reset_index()
-                for f in unique_forms:
-                    form_df = opus_df[opus_df['form'] == f]
-                    high_rec_df = form_df[form_df['nrecordings'] >= threshold]
-                    low_rec_df = form_df[form_df['nrecordings'] < threshold]
-                    if len(high_rec_df) < 10:
-                        low_rec_df = low_rec_df.sort_values(by='nrecordings', ascending=False)
-                        low_rec_df = low_rec_df.head(10 - len(high_rec_df))
-                        high_rec_df = pd.concat([high_rec_df, low_rec_df], ignore_index=True)
-                    keep_df = pd.concat([keep_df, high_rec_df], ignore_index=True)
+        def addRepresentativeTrack(df, original_df):
+            """Adds the ID of the most popular track for each opus"""
+            # For each opus, find the track with highest popularity
+            representative_tracks = original_df.sort_values('popularity', ascending=False) \
+                .groupby(['opusname', 'composer']) \
+                .agg({'id': 'first'}) \
+                .reset_index() \
+                .rename(columns={'id': 'representativeTrack'})
+            
+            return df.merge(representative_tracks, on=['opusname', 'composer'])
 
-                keep_df = keep_df.drop(columns=['form', 'nrecordings'])
-                keep_df['kept'] = True
-                return keep_df
-
-            elif type == 'Composer':
-                unique_composer = df['composer'].unique()
-                keep_df = pd.DataFrame(columns=['op_artist'])
-                opus_df = df[['op_artist', 'composer', 'nrecordings']].groupby(by=['op_artist']) \
-                    .agg({'composer': 'first', 'nrecordings': 'first'}).reset_index()
-                for f in unique_composer:
-                    comp_df = opus_df[opus_df['composer'] == f]
-                    high_rec_df = comp_df[comp_df['nrecordings'] >= threshold]
-                    low_rec_df = comp_df[comp_df['nrecordings'] < threshold]
-                    if len(high_rec_df) < 10:
-                        low_rec_df = low_rec_df.sort_values(by='nrecordings', ascending=False)
-                        low_rec_df = low_rec_df.head(10 - len(high_rec_df))
-                        high_rec_df = pd.concat([high_rec_df, low_rec_df], ignore_index=True)
-                    keep_df = pd.concat([keep_df, high_rec_df], ignore_index=True)
-
-                keep_df = keep_df.drop(columns=['composer', 'nrecordings'])
-                keep_df['kept'] = True
-                return keep_df
-
-        # categorized_df['opusname_lower'] = categorized_df['opusname'].str.lower()
-        # Getting number of recordings
-        print('Getting number of recordings...')
-        categorized_df['op_artist'] = categorized_df['opusname_lower'] + categorized_df['composer']
-        recording_counts = categorized_df['op_artist'].value_counts().reset_index()
-        recording_counts.columns = ['op_artist', 'nrecordings']
-        recording_counts = recording_counts.sort_values(by=['nrecordings'], ascending=False)
-        categorized_df = categorized_df.merge(recording_counts, on=['op_artist'], how='left')
-
-        categorized_df.to_csv('categorized_output.csv', encoding='utf-8')
-        # categorized_df = pd.read_csv('categorized_output.csv', encoding='utf-8', keep_default_na=False, na_filter=False)
-
-        form_df = categorized_df.copy()
-        composer_df = categorized_df.copy()
-
-        # Remove opus with low number of recordings
-        print('Removing unrepresentative tracks...')
-        op_to_keep = removeLowRecordings(form_df, threshold=50, type='Form')
-        form_df = form_df.merge(op_to_keep, how='left', on='op_artist')
-        form_df = form_df[form_df['kept'] == True]
-        form_df = form_df.drop(columns=['kept'])
-        op_to_keep = removeLowRecordings(form_df, threshold=50, type='Composer')
-        composer_df = composer_df.merge(op_to_keep, how='left', on='op_artist')
-        composer_df = composer_df[composer_df['kept'] == True]
-        composer_df = composer_df.drop(columns=['kept'])
-
-        # Group the works
-        form_df = form_df.groupby(by=['op_artist', 'composer']) \
-            .agg({'opusname': 'first', 'popularity': 'mean', 'form': 'first', 'nrecordings': 'first'}).reset_index()
-        composer_df = composer_df.groupby(by=['op_artist', 'composer']) \
-            .agg({'opusname': 'first', 'popularity': 'mean', 'form': 'first', 'nrecordings': 'first'}).reset_index()
-
-        # Normalize the popularity by the number of recordings
-        print('Normalizing popularity...')
-        form_df = normalizePopularity(form_df, 'Form')
-        composer_df = normalizePopularity(composer_df, 'Composer')
-
-        # Arrange columns
-        form_df = form_df.rename(
-            columns={'opusname': 'opusName', 'nrecordings': 'recordingCount'})
-        composer_df = composer_df.rename(
-            columns={'opusname': 'opusName', 'nrecordings': 'recordingCount'})
-        categorized_df = categorized_df.rename(
-            columns={'opusname': 'opusName', 'nrecordings': 'recordingCount'})
-        form_df = form_df[['opusName', 'composer', 'form', 'formPopularity', 'recordingCount']]
-        composer_df = composer_df[['opusName', 'composer', 'form', 'composerPopularity', 'recordingCount']]
-
-        self.formOpus = form_df
-        self.composerOpus = composer_df
-        self.fullOpus = categorized_df
+        # Main processing pipeline
+        print("Starting post-processing...")
+        
+        # 1. Read and filter tracks
+        print("Reading and filtering tracks...")
+        original_df = readAndFilterTracks()
+        
+        # 2. Group by opus
+        print("Grouping tracks by opus...")
+        processed_df = groupByOpus(original_df)
+        
+        # 3. Add recording count
+        print("Adding recording counts...")
+        processed_df = addRecordingCount(processed_df, original_df)
+        
+        # 4. Filter by recording count
+        print("Filtering tracks by recording count...")
+        processed_df = filterByRecordingCount(processed_df)
+        
+        # 5. Normalize popularity
+        print("Normalizing popularity...")
+        processed_df = normalizePopularity(processed_df)
+        
+        # 6. Add representative track
+        print("Adding representative tracks...")
+        processed_df = addRepresentativeTrack(processed_df, original_df)
+        
+        # Clean up and organize columns
+        final_columns = [
+            'opusname', 'composer', 'form', 'formPopularity', 
+            'composerPopularity', 'recordingCount', 'representativeTrack',
+            'composerRelevant', 'formRelevant'
+        ]
+        processed_df = processed_df[final_columns]
+        
+        # Save the result
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        output_path = os.path.join(script_dir, '../data/parsedTracks/ProcessedTracks.json')
+        processed_df.to_json(output_path, orient='records', force_ascii=False, indent=2)
+        
+        print("Post-processing completed!")
+        return processed_df
 
     def getTracks(self):
         """
@@ -475,11 +516,6 @@ class RegexParser():
             df = df[df['composer'] == main_composer]
             self.tracks = pd.concat([self.tracks, df], ignore_index=True)
 
-    def saveLocal(self):
-        self.formOpus.to_json('form_opus.json', orient='records', force_ascii=False)
-        self.composerOpus.to_json('composer_opus.json', orient='records', force_ascii=False)
-        self.uncategorizedTracks.to_json('uncategorized.json', orient='records', force_ascii=False)
-
     def regexParsedToCSV(self):
         """
         Saves RegexParsed.json in CSV
@@ -506,8 +542,6 @@ class RegexParser():
             chunk.to_csv(csv_path, encoding='utf-8', index=False)
 
 opus_handler = RegexParser()
-opus_handler.parseOpus()
-opus_handler.applyCustomRules()
-# opus_handler.saveLocal()
-# opus_handler.generateTemplate()
-# opus_handler.regexParsedToCSV()
+# opus_handler.parseOpus()
+# opus_handler.applyCustomRules()
+opus_handler.postProcess()
