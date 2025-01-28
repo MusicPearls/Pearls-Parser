@@ -194,6 +194,12 @@ def manageBatches():
                 print("No more batches to process. Exiting.")
                 break
 
+            # Step 3: Check the status of the batches
+            getBatchesStatus()
+            
+            # Step 4: Handle completed batches
+            handleFinishedBatches()
+            
             # Step 1: Upload all possible batches within the queue token limit
             QueueBatches()
             
@@ -201,11 +207,7 @@ def manageBatches():
             print("Waiting for 30 minutes...")
             time.sleep(1800)
             
-            # Step 3: Check the status of the batches
-            getBatchesStatus()
-            
-            # Step 4: Handle completed batches
-            handleFinishedBatches()
+
             
         except Exception as e:
             print(f"Error in batch management: {str(e)}")
@@ -265,9 +267,12 @@ def getBatchesStatus():
     batches = client.batches.list()
     batchesJson = []
     
+    # Get the start of the current day
+    today_start = SCRIPT_START_TIME.replace(day=21, hour=0, minute=0, second=0, microsecond=0)
+    
     for batch in batches:
         created_at = datetime.fromtimestamp(batch.created_at)
-        if created_at > SCRIPT_START_TIME:
+        if created_at > today_start:
             completed_at = datetime.fromtimestamp(batch.completed_at).strftime('%Y-%m-%d %H:%M') if batch.completed_at else None
             batchesJson.append({
                 'id': batch.id,
@@ -280,7 +285,7 @@ def getBatchesStatus():
             })
     with open(os.path.join(script_dir, f'../data/gptBatches/batchStatus.json'), 'w', encoding='utf-8') as file:
         json.dump(batchesJson, file, ensure_ascii=False)
-        print(batchesJson)
+        print("batchStatus file updated")
 
 def handleFinishedBatches():
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -288,15 +293,29 @@ def handleFinishedBatches():
         batches = json.load(file)
 
     for batch in batches:
-        if batch['status'] == "completed" and batch['metadata']:
-
-            
+        if batch['status'] in ["completed", "failed"] and batch['metadata']:
             filename = batch['metadata']['filename']
             inProgressFiles = os.listdir(os.path.join(script_dir, f'../data/gptBatches/InProgress'))
 
             if filename in inProgressFiles:
+                # Handle failed batches
+                if batch['status'] == "failed":
+                    shutil.move(os.path.join(script_dir, f'../data/gptBatches/InProgress/{filename}'), 
+                              os.path.join(script_dir, f'../data/gptBatches/Error/{filename}'))
+                    
+                    if batch['error_file_id']:
+                        errorFileId = batch['error_file_id']
+                        error_response = client.files.content(errorFileId).text
+                        errorJson = []
+                        for line in error_response.splitlines():
+                            errorJson.append(json.loads(line))
 
-                # Move to Error and get error message if there is an Error
+                        with open(os.path.join(script_dir, f'../data/gptBatches/Error/error_{filename}.json'), 'w', encoding='utf-8') as f:
+                            json.dump(errorJson, f, ensure_ascii=False)
+                    print(f'Failed batch {filename} moved to Error')
+                    continue
+
+                # Handle completed batches with errors
                 if batch['error_file_id']:
                     shutil.move(os.path.join(script_dir, f'../data/gptBatches/InProgress/{filename}'), 
                         os.path.join(script_dir, f'../data/gptBatches/Error/{filename}'))
@@ -329,9 +348,6 @@ def handleFinishedBatches():
                         json.dump(responseJson, f, ensure_ascii=False)
                     shutil.move(os.path.join(script_dir, f'../data/gptBatches/InProgress/{filename}'), 
                         os.path.join(script_dir, f'../data/gptBatches/Finished/{filename}')) 
-
-            else:
-                print(f'Batch {filename} not In Progress')
 
 def tokenChunkSplitter(tracks, max_tokens):
     enc = tiktoken.get_encoding("o200k_base")
@@ -432,6 +448,40 @@ def ensureUTF8():
             shutil.copy2(backup_path, full_path)
             raise
 
-manageBatches()
+def mergeAiTracks():
+    """
+    Merges all aiTracks_*.json files into a single file with the same format as RegexParsed.json
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    ai_tracks_dir = os.path.join(script_dir, '../data/aiTracks')
+    
+    # Get all aiTracks files
+    ai_files = [f for f in os.listdir(ai_tracks_dir) if f.startswith('aiTracks_') and f.endswith('.json')]
+    
+    # Sort files numerically
+    ai_files.sort(key=lambda x: int(x.split('_')[1].split('.')[0]))
+    
+    # Merge all tracks
+    all_tracks = []
+    for file in ai_files:
+        with open(os.path.join(ai_tracks_dir, file), 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            for item in data:
+                try:
+                    all_tracks.extend(item['tracks'])
+                except Exception as e:
+                    print(f"Error parsing {file}: {item}")
+                    print(str(e))
+                    continue
+
+    output_path = os.path.join(script_dir, './AiParsed.json')
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(all_tracks, f, ensure_ascii=False, indent=2)
+    
+    print(f"Successfully merged {len(ai_files)} files containing {len(all_tracks)} tracks")
+
+# manageBatches()
 # batchCreator()
 # getBatchesStatus()
+# handleFinishedBatches()
+mergeAiTracks()

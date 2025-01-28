@@ -14,14 +14,15 @@ musicalForms = [
     "Symphony", "Symphonie", 'Sinfonie', 'Symfonie', 'Symfonia',
     "Piano Concerto", 'Keyboard Concerto', 'Klavierkonzert', 'Concerto pour piano',
     'Violin Concerto', 'Cello Concerto', 'Flute Concerto', 'Clarinet Concerto', 'Trumpet Concerto',
-    'Oboe Concerto', 'Bassoon Concerto', 'Horn Concerto', 'Viola Concerto',
+    'Oboe Concerto', 'Bassoon Concerto', 'Horn Concerto', 'Viola Concerto', 'Clarinet Concerto',
     "Piano Sonata", "Klaviersonate", "Sonata per pianoforte",
-    'Violin Sonata', 'Cello Sonata', 'Clarinet Sonata', 'Oboe Sonata', 'Horn Sonata', 'Viola Sonata', 'Bassoon Sonata',
+    'Violin Sonata', 'Cello Sonata', 'Clarinet Sonata', 'Oboe Sonata', 'Horn Sonata', 'Viola Sonata', 'Bassoon Sonata', 'Horn Sonata', 'Flute Sonata', 'Trumpet Sonata'
     "String Quartet", "String Trio",
     'Piano Trio', 'Keyboard Trio',
     'Piano Quartet', 'Keyboard Quartet',
     'Quintet', 'Sextet', 'Octet',
     "Mass", 'Missa',
+    'Song',
     'Requiem',
     "Oratorio",
     "Cantata",
@@ -229,14 +230,17 @@ class RegexParser():
                 return ''
             return int(value)
 
+        # Fetch tracks
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        print('Fetching Tracks...\n')
+        self.getTracks()
+
         # Categorizing tracks
-        print('Categorizing Tracks...')
+        print('Categorizing Tracks...\n')
         df = self.tracks.copy()
         df['form'] = df['name'].apply(categorize)
         categorized_df = df[df['form'] != '']
         uncategorized_df = df[df['form'] == '']
-        # categorized_df.to_csv('categorized_raw.csv', encoding='utf-8')
-        # uncategorized_df.to_csv('uncategorized_raw.csv', encoding='utf-8')
 
         # Joining equivalent categories
         categorized_df['stantardized_form'] = categorized_df['form'].apply(lambda x: formMapper(x, formsMapping))
@@ -244,7 +248,7 @@ class RegexParser():
         print(f'Categorized {len(categorized_df.index)} of {len(df.index)} tracks ({int((len(categorized_df.index)/(len(df.index)))*100)}%) ')
 
         # Getting catalog of tracks
-        print('Getting catalog of tracks...')
+        print('Getting catalog of tracks...\n')
         categorized_df['number'] = categorized_df['name'].apply(getNo)
         categorized_df[['op', 'catalog']] = categorized_df['name'].apply(getOp).apply(pd.Series)
         categorized_df['popularity'] = categorized_df['popularity'].apply(convert_to_int)
@@ -255,20 +259,53 @@ class RegexParser():
         categorized_df = findOpus(categorized_df)
 
         # Creating opus name
-        print('Creating opus name of tracks...')
+        print('Creating opus name of tracks...\n')
         categorized_df['opusname'] = categorized_df.apply(lambda row: createOpusName(row, ['name', 'form', 'number', 'op', 'catalog']), axis=1)
 
-
-        categorized_df = categorized_df[['name', 'composer', 'opusname', 'form', 'id']]
+        print('Finishing up...\n')
+        categorized_df = categorized_df[['name', 'composer', 'opusname', 'form', 'id', 'popularity', 'artists']]
         uncategorized_df['opusname'] = ''
         uncategorized_df['form'] = ''
-        parsed_df = pd.concat([categorized_df, uncategorized_df[['name', 'composer', 'opusname', 'form', 'id']]], ignore_index=True)
-        parsed_df.to_csv('RegexParsed.csv', encoding='utf-8')
-        parsed_df.to_json('RegexParsed.json', orient='records', force_ascii=False)
+        parsed_df = pd.concat([categorized_df, uncategorized_df[['name', 'composer', 'opusname', 'form', 'id', 'popularity', 'artists']]], ignore_index=True)
+        parsed_df.to_json(os.path.join(script_dir, '../data/parsedTracks/RegexParsed.json'), 
+                          orient='records', 
+                          force_ascii=False)
+
+    def applyCustomRules(self):
+        """
+        Fetches the custom rules from customRules.csv and applies
+        them into the initial RegexParsed.json
+        """
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        print('Applying custom rules...\n')
+
+        # Load custom rules and tracks into DataFrames
+        rules_df = pd.read_csv(os.path.join(script_dir, 'customRules.csv'))
+        tracks_df = pd.read_json(os.path.join(script_dir, '../data/parsedTracks/RegexParsed.json'))
+        
+        # Convert names to lowercase for matching
+        rules_df['name_lower'] = rules_df['name'].str.lower()
+        tracks_df['name_lower'] = tracks_df['name'].str.lower()
+        
+        # For each rule, find and update matching tracks
+        for _, rule in rules_df.iterrows():
+            mask = (tracks_df['name_lower'].str.contains(rule['name_lower'], na=False)) & \
+                   (tracks_df['composer'] == rule['composer'])
+            
+            if mask.any():
+                tracks_df.loc[mask, 'form'] = rule['form']
+                tracks_df.loc[mask, 'opusname'] = rule['opusName']
+        
+        # Drop the temporary lowercase column and save
+        tracks_df = tracks_df.drop('name_lower', axis=1)
+        tracks_df.to_json(
+            os.path.join(script_dir, '../data/parsedTracks/RegexParsed.json'),
+            orient='records',
+            force_ascii=False,
+            indent=2
+        )
 
     def postProcess(self):
-        
-
         def normalizePopularity(df, type):
             """
             Function that makes the log-normalization of the popularity of the track
@@ -443,8 +480,34 @@ class RegexParser():
         self.composerOpus.to_json('composer_opus.json', orient='records', force_ascii=False)
         self.uncategorizedTracks.to_json('uncategorized.json', orient='records', force_ascii=False)
 
+    def regexParsedToCSV(self):
+        """
+        Saves RegexParsed.json in CSV
+        """
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        json_path = os.path.join(script_dir, '../data/parsedTracks/RegexParsed.json')
+        
+        # Read JSON into dataframe
+        df = pd.read_json(json_path)
+        
+        # Sort by composer and popularity
+        df = df.sort_values(['composer', 'popularity'], ascending=[True, False])
+        
+        # Calculate chunk size
+        chunk_size = len(df) // 4
+        
+        # Split and save chunks
+        for i in range(4):
+            start_idx = i * chunk_size
+            end_idx = start_idx + chunk_size if i < 3 else len(df)
+            chunk = df.iloc[start_idx:end_idx]
+            
+            csv_path = os.path.join(script_dir, f'../data/parsedTracks/RegexParsed_chunk{i+1}.csv')
+            chunk.to_csv(csv_path, encoding='utf-8', index=False)
 
 opus_handler = RegexParser()
-opus_handler.getTracks()
 opus_handler.parseOpus()
+opus_handler.applyCustomRules()
 # opus_handler.saveLocal()
+# opus_handler.generateTemplate()
+# opus_handler.regexParsedToCSV()

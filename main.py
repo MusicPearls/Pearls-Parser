@@ -6,7 +6,6 @@ import SpotifyScraper.getTracks
 import SpotifyScraper.utils
 import Parsers.AiParser
 import Parsers.RegexParser
-from dotenv import load_dotenv
 import os
 
 
