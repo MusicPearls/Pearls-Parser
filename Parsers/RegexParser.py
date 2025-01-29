@@ -405,8 +405,8 @@ class RegexParser():
             2. Within each composer's works (composerPopularity) - using only composer-relevant tracks
             Both normalizations account for recording counts and range from 0 to 100
             """
-            # Calculate base log-normalized popularity for all tracks
-            df['p_log_r'] = df['popularity'] * np.log1p(df['recordingCount'])
+            # Calculate base popularity with increased weight on log-normalized recording count
+            df['p_log_r'] = df['popularity'] * (np.log1p(df['recordingCount']) ** 2)
             
             # Normalize by form (using only form-relevant tracks)
             form_relevant = df[df['formRelevant']].copy()
