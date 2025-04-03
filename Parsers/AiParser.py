@@ -194,16 +194,16 @@ def manageBatches():
                 print("No more batches to process. Exiting.")
                 break
 
-            # Step 3: Check the status of the batches
+            # Step 1: Check the status of the batches
             getBatchesStatus()
             
-            # Step 4: Handle completed batches
+            # Step 2: Handle completed batches
             handleFinishedBatches()
             
-            # Step 1: Upload all possible batches within the queue token limit
+            # Step 3: Upload all possible batches within the queue token limit
             QueueBatches()
             
-            # Step 2: Wait for 30 minutes
+            # Step 4: Wait for 30 minutes
             print("Waiting for 30 minutes...")
             time.sleep(1800)
             
@@ -455,6 +455,11 @@ def mergeAiTracks():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     ai_tracks_dir = os.path.join(script_dir, '../data/aiTracks')
     
+    # Check if the directory exists
+    if not os.path.exists(ai_tracks_dir):
+        print(f"Error: The directory '{ai_tracks_dir}' does not exist.")
+        return
+    
     # Get all aiTracks files
     ai_files = [f for f in os.listdir(ai_tracks_dir) if f.startswith('aiTracks_') and f.endswith('.json')]
     
@@ -479,9 +484,3 @@ def mergeAiTracks():
         json.dump(all_tracks, f, ensure_ascii=False, indent=2)
     
     print(f"Successfully merged {len(ai_files)} files containing {len(all_tracks)} tracks")
-
-# manageBatches()
-# batchCreator()
-# getBatchesStatus()
-# handleFinishedBatches()
-mergeAiTracks()

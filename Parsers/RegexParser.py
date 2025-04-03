@@ -268,7 +268,7 @@ class RegexParser():
         uncategorized_df['opusname'] = ''
         uncategorized_df['form'] = ''
         parsed_df = pd.concat([categorized_df, uncategorized_df[['name', 'composer', 'opusname', 'form', 'id', 'popularity', 'artists']]], ignore_index=True)
-        parsed_df.to_json(os.path.join(script_dir, '../data/parsedTracks/RegexParsed.json'), 
+        parsed_df.to_json(os.path.join(script_dir, '../data/regexParsed.json'), 
                           orient='records', 
                           force_ascii=False)
 
@@ -281,8 +281,8 @@ class RegexParser():
         print('Applying custom rules...\n')
 
         # Load custom rules and tracks into DataFrames
-        rules_df = pd.read_csv(os.path.join(script_dir, 'customRules.csv'))
-        tracks_df = pd.read_json(os.path.join(script_dir, '../data/parsedTracks/RegexParsed.json'))
+        rules_df = pd.read_csv(os.path.join(script_dir, '../data/customRules.csv'))
+        tracks_df = pd.read_json(os.path.join(script_dir, '../data/regexParsed.json'))
         
         # Convert names to lowercase for matching
         rules_df['name_lower'] = rules_df['name'].str.lower()
@@ -300,7 +300,7 @@ class RegexParser():
         # Drop the temporary lowercase column and save
         tracks_df = tracks_df.drop('name_lower', axis=1)
         tracks_df.to_json(
-            os.path.join(script_dir, '../data/parsedTracks/RegexParsed.json'),
+            os.path.join(script_dir, '../data/regexParsed.json'),
             orient='records',
             force_ascii=False,
             indent=2
@@ -319,7 +319,7 @@ class RegexParser():
         def readAndFilterTracks():
             """Reads the RegexParsed.json file and filters out uncategorized tracks"""
             script_dir = os.path.dirname(os.path.abspath(__file__))
-            file_path = os.path.join(script_dir, '../data/parsedTracks/RegexParsed.json')
+            file_path = os.path.join(script_dir, '../data/regexParsed.json')
             
             # Read and filter tracks
             df = pd.read_json(file_path)
@@ -483,7 +483,7 @@ class RegexParser():
         
         # Save the result
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        output_path = os.path.join(script_dir, '../data/parsedTracks/ProcessedTracks.json')
+        output_path = os.path.join(script_dir, '../data/processedTracks.json')
         processed_df.to_json(output_path, orient='records', force_ascii=False, indent=2)
         
         print("Post-processing completed!")
@@ -521,27 +521,25 @@ class RegexParser():
         Saves RegexParsed.json in CSV
         """
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        json_path = os.path.join(script_dir, '../data/parsedTracks/RegexParsed.json')
+        json_path = os.path.join(script_dir, '../data/regexParsed.json')
         
         # Read JSON into dataframe
         df = pd.read_json(json_path)
         
         # Sort by composer and popularity
         df = df.sort_values(['composer', 'popularity'], ascending=[True, False])
+    
+        # Alphabetical ranges for splitting
+        ranges = {
+            "A-F": list("ABCDEF"),
+            "G-L": list("GHIJKL"),
+            "M-R": list("MNOPQR"),
+            "S-Z": list("STUVWXYZ")
+        }
         
-        # Calculate chunk size
-        chunk_size = len(df) // 4
-        
-        # Split and save chunks
-        for i in range(4):
-            start_idx = i * chunk_size
-            end_idx = start_idx + chunk_size if i < 3 else len(df)
-            chunk = df.iloc[start_idx:end_idx]
-            
-            csv_path = os.path.join(script_dir, f'../data/parsedTracks/RegexParsed_chunk{i+1}.csv')
-            chunk.to_csv(csv_path, encoding='utf-8', index=False)
-
-opus_handler = RegexParser()
-# opus_handler.parseOpus()
-# opus_handler.applyCustomRules()
-opus_handler.postProcess()
+        # Filter and save each chunk
+        for key, letters in ranges.items():
+            chunk = df[df['composer'].str[0].str.upper().isin(letters)]
+            if not chunk.empty:
+                csv_path = os.path.join(script_dir, f'../data/regexParsed_{key}.csv')
+                chunk.to_csv(csv_path, encoding='utf-8', index=False)
